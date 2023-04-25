@@ -9,7 +9,7 @@ import { ANVILMembraneOrientation } from '../../extensions/anvil/behavior';
 import { CellPack } from '../../extensions/cellpack';
 import { DnatcoNtCs } from '../../extensions/dnatco';
 import { G3DFormat, G3dProvider } from '../../extensions/g3d/format';
-import { Volseg, VolsegVolumeServerConfig } from '../../extensions/volumes-and-segmentations';
+// import { Volseg, VolsegVolumeServerConfig } from '../../extensions/volumes-and-segmentations';
 import { GeometryExport } from '../../extensions/geo-export';
 import { MAQualityAssessment } from '../../extensions/model-archive/quality-assessment/behavior';
 import { QualityAssessmentPLDDTPreset, QualityAssessmentQmeanPreset } from '../../extensions/model-archive/quality-assessment/behavior';
@@ -49,6 +49,18 @@ import { ObjectKeys } from '../../mol-util/type-helpers';
 import { SaccharideCompIdMapType } from '../../mol-model/structure/structure/carbohydrates/constants';
 import { Backgrounds } from '../../extensions/backgrounds';
 
+// Rosalind Imports
+import { StateObjectCell } from '../../mol-state';
+import { Script } from '../../mol-script/script';
+import { ColorNames } from '../../mol-util/color/names';
+import {
+    // @ts-ignore
+    OverpaintStructureRepresentation3DFromScript, StructureRepresentation3D
+} from '../../mol-plugin-state/transforms/representation';
+// @ts-ignore
+import { MolecularSurfaceRepresentationProvider } from '../../mol-repr/structure/representation/molecular-surface';
+// End Rosalind Imports
+
 export { PLUGIN_VERSION as version } from '../../mol-plugin/version';
 export { setDebugMode, setProductionMode, setTimingMode, consoleStats } from '../../mol-util/debug';
 
@@ -57,7 +69,7 @@ const CustomFormats = [
 ];
 
 const Extensions = {
-    'volseg': PluginSpec.Behavior(Volseg),
+    // 'volseg': PluginSpec.Behavior(Volseg),
     'backgrounds': PluginSpec.Behavior(Backgrounds),
     'cellpack': PluginSpec.Behavior(CellPack),
     'dnatco-ntcs': PluginSpec.Behavior(DnatcoNtCs),
@@ -107,7 +119,7 @@ const DefaultViewerOptions = {
     pdbProvider: PluginConfig.Download.DefaultPdbProvider.defaultValue,
     emdbProvider: PluginConfig.Download.DefaultEmdbProvider.defaultValue,
     saccharideCompIdMapType: 'default' as SaccharideCompIdMapType,
-    volumesAndSegmentationsDefaultServer: VolsegVolumeServerConfig.DefaultServer.defaultValue,
+    // volumesAndSegmentationsDefaultServer: VolsegVolumeServerConfig.DefaultServer.defaultValue,
 };
 type ViewerOptions = typeof DefaultViewerOptions;
 
@@ -182,7 +194,7 @@ export class Viewer {
                 [PluginConfig.Download.DefaultEmdbProvider, o.emdbProvider],
                 [PluginConfig.Structure.DefaultRepresentationPreset, ViewerAutoPreset.id],
                 [PluginConfig.Structure.SaccharideCompIdMapType, o.saccharideCompIdMapType],
-                [VolsegVolumeServerConfig.DefaultServer, o.volumesAndSegmentationsDefaultServer],
+                // [VolsegVolumeServerConfig.DefaultServer, o.volumesAndSegmentationsDefaultServer],
             ]
         };
 
@@ -223,6 +235,185 @@ export class Viewer {
                 }
             }
         }));
+    }
+
+    /**
+        This function highlights an epitope
+     */
+    async highlightEpitope(
+        epitopeMap: Array<number[]>, // [[75, 86], ...],
+        mutationMap: Array<number[]>, // same data structure as epitopeMap
+        overlapMap: Array<number[]> // same data structure as epitopeMap
+    ) {
+
+        // Example of using jQuery-like methods to get objects
+        const allRepresentations = this.plugin.state.data.selectQ(q => q.ofType(
+            PluginStateObject.Molecule.Structure.Representation3D
+        ));
+        console.debug('sl allRepresentations:');
+        console.debug(allRepresentations);
+
+        // Get cartoon and water cells
+        const cells = this.plugin.state.data.cells;
+        let cartoonCell: StateObjectCell;
+        let waterCell: StateObjectCell;
+        let carbohydrateCell: StateObjectCell;
+
+        // Get keys of map entry by index
+        const cellKeys = Array.from(cells.keys());
+        console.debug('sl cellKeys:');
+        console.debug(cellKeys); // sl
+        let cartoonCellIsAlreadySet = false;
+        let waterCellIsAlreadySet = false;
+        let carbohydrateCellIsAlreadySet = false;
+
+        // Loop through cells
+        for (let i = 0; i < cellKeys.length; i++) {
+            const cellKey = cellKeys[i];
+            const cell = cells.get(cellKey);
+            console.debug('sl cell: ' + cellKey);
+            console.debug(cell); // sl
+            const label = cell!.obj!.label
+            const typeClass = cell!.obj!.type!.typeClass
+
+            // Get cartoon cell
+            if (cell!.obj!.label === 'Cartoon') {
+                // @ts-ignore
+                cartoonCell = cell;
+                if (cartoonCellIsAlreadySet === true) {
+                    throw new Error('Unexpected: multiple cells labeled "Cartoon"');
+                }
+                cartoonCellIsAlreadySet = true;
+                continue;
+            }
+
+            // Get water cell
+            // Water cell is found from child representation
+            const sourceRef = cell!.sourceRef;
+            // Skip if this cell has no parent
+            if (sourceRef === undefined) {
+                continue;
+            }
+            const sourceCell = cells.get(sourceRef);
+            if (sourceCell!.obj!.label === 'Water') {
+                // @ts-ignore
+                waterCell = cell;
+                if (waterCellIsAlreadySet === true) {
+                    throw new Error('Unexpected: multiple cells labeled "Water"');
+                }
+                waterCellIsAlreadySet = true;
+            }
+
+            // Get carbohydrate cell
+            if (
+                typeClass === 'Representation3D'
+                && label === 'Carbohydrate'
+            ) {
+                // @ts-ignore
+                carbohydrateCell = cell;
+                if (carbohydrateCellIsAlreadySet === true) {
+                    throw new Error('Unexpected: multiple cells labeled "Water"');
+                }
+                carbohydrateCellIsAlreadySet = true;
+            }
+        }
+
+        // Hide water
+        // @ts-ignore
+        if (waterCell !== undefined) {
+            waterCell!.obj!.data.repr.setState({ visible: false });
+        }
+
+        // Hide carbohydrate symbology
+        // @ts-ignore
+        if (carbohydrateCell !== undefined) {
+            carbohydrateCell!.obj!.data.repr.setState({ visible: false });
+        }
+
+        // Set uniform color of cartoon cell
+        // @ts-ignore
+        if (cartoonCell !== undefined) {
+            // const cartoonRepresentation = MolecularSurfaceRepresentationProvider.factory(
+            //     this.plugin.reprCtx, MolecularSurfaceRepresentationProvider.getParams
+            // );
+            // cartoonRepresentation.setTheme({
+            //   color: this.reprCtx.colorThemeRegistry.create('element-symbol', { structure }),
+            //   size: this.reprCtx.sizeThemeRegistry.create('uniform', { structure })
+            // })
+            // await cartoonRepresentation.createOrUpdate({ ...CartoonRepresentationProvider.defaultValues, quality: 'auto' }, structure).run();
+            // this.canvas3d.add(cartoonRepresentation);
+        }
+
+        // Set script language
+        const language = 'mol-script';
+
+        // Create overpaint params object
+        const overpaintParams = {
+            layers: []
+        };
+        // Add epitope layers
+        for (let i = 0; i < epitopeMap.length; i++) {
+            const loci = epitopeMap[i];
+            const start = loci[0];
+            const stop = loci[1];
+            // @ts-ignore
+            overpaintParams.layers.push({
+                script: Script(
+                    `(sel.atom.res (in-range atom.resno ${start} ${stop}))`,
+                    language
+                ),
+                color: ColorNames.blue,
+                clear: false
+            });
+        }
+        // Add mutation layers
+        for (let i = 0; i < mutationMap.length; i++) {
+            const loci = mutationMap[i];
+            const start = loci[0];
+            const stop = loci[1];
+            // @ts-ignore
+            overpaintParams.layers.push({
+                script: Script(
+                    `(sel.atom.res (in-range atom.resno ${start} ${stop}))`,
+                    language
+                ),
+                color: ColorNames.red,
+                clear: false
+            });
+        }
+        // Add overlap layers
+        for (let i = 0; i < overlapMap.length; i++) {
+            const loci = overlapMap[i];
+            const start = loci[0];
+            const stop = loci[1];
+            // @ts-ignore
+            overpaintParams.layers.push({
+                script: Script(
+                    `(sel.atom.res (in-range atom.resno ${start} ${stop}))`,
+                    language
+                ),
+                color: ColorNames.yellow,
+                clear: false
+            });
+        }
+
+        // Build the viewer plugin for applying changes
+        const update = this.plugin.build();
+
+        // Apply molecular surface
+        // @ts-ignore
+        update.to(cartoonCell).update({
+            type: { name: 'molecular-surface', params: { alpha: 1 } },
+            colorTheme: { name: 'entity-id', params: {} },
+        });
+
+        // Apply overpaint to epitope
+        // @ts-ignore
+        update.to(cartoonCell).apply(OverpaintStructureRepresentation3DFromScript, overpaintParams);
+
+        // Commit changes
+        await update.commit();
+
     }
 
     async loadAllModelsOrAssemblyFromUrl(url: string, format: BuiltInTrajectoryFormat = 'mmcif', isBinary = false, options?: LoadStructureOptions) {
